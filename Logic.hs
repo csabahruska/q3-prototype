@@ -21,40 +21,39 @@ data GameState
 _CONTENTS_SOLID = 1 :: Int -- an eye is never valid in a solid
 _MASK_SOLID     = _CONTENTS_SOLID
 
-createEntities bsp ents = fromList $ addItem [] ents
+spawnItem bsp EntityData{..} i = do
+  itemOrigin <- case spawnflags .&. 1 == 1 of
+    True  -> Just origin  -- suspended item
+    False -> do           -- drop to floor
+      let itemRadius = 15
+          maxs = Vec3 itemRadius itemRadius itemRadius
+          mins = neg maxs
+          end  = origin - Vec3 0 0 (-4096)
+      (endpos,TraceHit{..}) <- traceBox mins maxs bsp origin end _MASK_SOLID
+      if outputStartsOut then return endpos else Nothing
+  let item@Item{..} = items ! i
+  return $ EItem
+    { random      = fromMaybe 0 random
+    , wait        = fromMaybe 0 wait
+    , spawnflags  = spawnflags
+    , origin      = itemOrigin
+    , count       = itQuantity
+    , item        = item
+    }
+
+spawnEntities bsp ents = fromList . catMaybes $ fmap spawnEntity ents
   where
-    addItem l [] = l
-    addItem l (x:xs) = case findIndex (\i -> classname x == itClassName i) items of
-      Nothing -> addItem l xs
-      Just i  -> addItem l' xs where
-        EntityData{..} = x
-        item@Item{..} = items ! i
-        e p = EItem
-            { random      = fromMaybe 0 random
-            , wait        = fromMaybe 0 wait
-            , spawnflags  = spawnflags
-            , origin      = p
-            , count       = itQuantity
-            , item        = item
-            }
-        itemRadius = 15
-        maxs = Vec3 itemRadius itemRadius itemRadius
-        mins = neg maxs
-        end  = origin - Vec3 0 0 (-4096)
-        itemOrigin = case spawnflags .&. 1 == 1 of
-          True  -> Just origin -- suspended item
-          False -> do -- drop to floor
-            (endpos,TraceHit{..}) <- traceBox mins maxs bsp origin end _MASK_SOLID
-            if outputStartsOut then return endpos else Nothing
-        l' = case itemOrigin of
-          Nothing -> l
-          Just p  -> e p:l
+    spawnEntity x@EntityData{..} = case findIndex (\i -> classname == itClassName i) items of
+      Just i  -> spawnItem bsp x i
+      Nothing -> case classname of
+        -- TODO: add spawn entities
+        _ -> Nothing
 
 loadLevel = do
   let mapName = "q3dm6.bsp"
   bsp@BSPLevel{..} <- loadBSP mapName
   ents <- case parseEntities mapName blEntities of
     Left err -> fail err
-    Right xs -> return $ createEntities bsp xs
+    Right xs -> return $ spawnEntities bsp xs
 
   return $ GameState ents
